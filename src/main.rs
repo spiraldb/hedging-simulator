@@ -4,7 +4,8 @@ use std::{collections::BTreeMap, sync::atomic::AtomicUsize};
 
 use ascii_table::AsciiTable;
 use itertools::Itertools;
-use rand::{random_bool, rng};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use rand_distr::{Distribution, LogNormal};
 
 #[derive(Debug, Clone, Copy)]
@@ -31,20 +32,21 @@ impl std::fmt::Display for HedgingStrategy {
 }
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
+const RNG_SEED: u64 = 0;
 const SAMPLE_SIZE: usize = 100_000;
 
 impl HedgingStrategy {
-    fn make_request(&self, distribution: &LogNormal<f64>) -> f64 {
+    fn make_request(&self, distribution: &LogNormal<f64>, rng: &mut StdRng) -> f64 {
         match self {
             HedgingStrategy::None => {
                 COUNTER.fetch_add(1, Relaxed);
-                distribution.sample(&mut rng())
+                distribution.sample(&mut *rng)
             }
             HedgingStrategy::Immediate(n) => {
                 let mut sample = f64::MAX;
                 for _ in 0..usize::max(*n, 1) {
                     COUNTER.fetch_add(1, Relaxed);
-                    let new = distribution.sample(&mut rng());
+                    let new = distribution.sample(&mut *rng);
                     sample = sample.min(new);
                 }
 
@@ -52,21 +54,21 @@ impl HedgingStrategy {
             }
             HedgingStrategy::Delayed(delay) => {
                 COUNTER.fetch_add(1, Relaxed);
-                let baseline = distribution.sample(&mut rng());
+                let baseline = distribution.sample(&mut *rng);
                 if baseline > *delay {
                     COUNTER.fetch_add(1, Relaxed);
-                    f64::min(baseline, distribution.sample(&mut rng()))
+                    f64::min(baseline, distribution.sample(&mut *rng))
                 } else {
                     baseline
                 }
             }
             HedgingStrategy::Random(chance) => {
                 COUNTER.fetch_add(1, Relaxed);
-                let baseline = distribution.sample(&mut rng());
+                let baseline = distribution.sample(&mut *rng);
 
-                if random_bool(*chance) {
+                if rng.random_bool(*chance) {
                     COUNTER.fetch_add(1, Relaxed);
-                    f64::min(baseline, distribution.sample(&mut rng()))
+                    f64::min(baseline, distribution.sample(&mut *rng))
                 } else {
                     baseline
                 }
@@ -120,6 +122,7 @@ impl std::fmt::Display for Percentiles {
 
 fn main() {
     let distribution = LogNormal::new(4.7, 0.5).unwrap(); //p50 ~ 100, p95 ~ 250 and p100 ~ 600
+    let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
     let mut ascii_table = AsciiTable::default();
     ascii_table.column(0).set_header("Strategy");
@@ -140,7 +143,7 @@ fn main() {
         HedgingStrategy::Random(0.05),
     ] {
         let mut row = vec![Box::new(strategy) as _];
-        let percentiles = for_strategy(strategy, &distribution);
+        let percentiles = for_strategy(strategy, &distribution, &mut rng);
 
         let counter = COUNTER.fetch_update(Relaxed, Relaxed, |_| Some(0)).unwrap();
         row.push(Box::new(counter - SAMPLE_SIZE) as _);
@@ -157,10 +160,14 @@ fn main() {
     ascii_table.print(table_data);
 }
 
-fn for_strategy(strategy: HedgingStrategy, distribution: &LogNormal<f64>) -> Percentiles {
+fn for_strategy(
+    strategy: HedgingStrategy,
+    distribution: &LogNormal<f64>,
+    rng: &mut StdRng,
+) -> Percentiles {
     let mut samples = Vec::with_capacity(SAMPLE_SIZE);
     for _ in 0..SAMPLE_SIZE {
-        samples.push(strategy.make_request(distribution));
+        samples.push(strategy.make_request(distribution, rng));
     }
 
     calculate_percentiles(samples)
