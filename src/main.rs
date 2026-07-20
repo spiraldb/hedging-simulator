@@ -57,7 +57,7 @@ impl HedgingStrategy {
                 let baseline = distribution.sample(&mut *rng);
                 if baseline > *delay {
                     COUNTER.fetch_add(1, Relaxed);
-                    f64::min(baseline, distribution.sample(&mut *rng))
+                    f64::min(baseline, delay + distribution.sample(&mut *rng))
                 } else {
                     baseline
                 }
@@ -181,7 +181,7 @@ fn calculate_percentiles(mut samples: Vec<f64>) -> Percentiles {
     percentiles.insert(50, samples[samples.len() / 2]);
     percentiles.insert(75, samples[75 * samples.len() / 100]);
     percentiles.insert(90, samples[90 * samples.len() / 100]);
-    percentiles.insert(90, samples[95 * samples.len() / 100]);
+    percentiles.insert(95, samples[95 * samples.len() / 100]);
     percentiles.insert(99, samples[99 * samples.len() / 100]);
     percentiles.insert(100, samples[samples.len() - 1]);
 
